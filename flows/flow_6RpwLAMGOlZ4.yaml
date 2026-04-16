@@ -968,8 +968,9 @@ variables:
     {# Define the color mapping dictionary #}
     {
     "draw": [
-      {{draw_forecast_lines(8, [hours_to_show, (forecast or [])|length]|min, 0)}},
       {"dt":[{{text_x}},1,"{{temp_text}}","{{interpolate(color_dict, current_temp | float)}}"]}
+      {%- set forecast_hours = [hours_to_show, (forecast or [])|length]|min %}
+      {%- if forecast_hours > 0 %}, {{draw_forecast_lines(8, forecast_hours, 0)}}{% endif %}
       {% if show_moon %}, {{moon_data}} {% endif %}
     ],
     "icon": "{{icon}}",
