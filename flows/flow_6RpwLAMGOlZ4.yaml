@@ -687,28 +687,20 @@ variables:
   sun_next_str: >-
     {%- set rise = state_attr('sun.sun','next_rising') or '2023-01-01T06:00:00+00:00' %}
     {%- set set = state_attr('sun.sun','next_setting') or '2023-01-01T18:00:00+00:00' %}
-    {%- set ts_rise = rise |as_timestamp %}
-    {%- set ts_set = set |as_timestamp %}
-    {%- set next_event = sun_next_event %}
+    {%- set ts_rise = rise | as_timestamp %}
+    {%- set ts_set = set | as_timestamp %}
+    {%- set next_event = iif(ts_set < ts_rise, 'sunset', 'sunrise') %}
     {%- if sun_time_type == 'Actual' %}
-      {{ iif(next_event == 'sunrise',(ts_rise | as_datetime | as_local).strftime(sun_time_format),  (ts_set | as_datetime | as_local).strftime(sun_time_format)) | to_json }}
+      "{{ iif(next_event == 'sunrise', (ts_rise | as_datetime | as_local).strftime(sun_time_format), (ts_set | as_datetime | as_local).strftime(sun_time_format)) }}"
     {%- else %}
-    {#- relative time #}
-      {% set minutes = sun_min_until_next_event %}
-      {% set hours = minutes // 60 %}
-      {% set remaining_minutes = minutes % 60 %}
-
-      {% if hours == 0 %}
-          {{ (remaining_minutes ~ ' min') | to_json }}
-      {% else %}
-          [
-            {"t":"{{hours}}", "c":"#ffffff"},
-            {"t":"h", "c":"#9c9d97"},
-            {"t":"{{remaining_minutes}}", "c":"#ffffff"},
-            {"t":"m", "c":"#9c9d97"}
-        ]
-      {% endif %}
-      
+    {%- set minutes = ((iif(next_event == 'sunrise', ts_rise, ts_set) - utcnow() | as_timestamp) / 60) | round(0) %}
+    {%- set hours = (minutes // 60) | int %}
+    {%- set remaining_minutes = (minutes % 60) | int %}
+    {%- if hours == 0 %}
+      "{{remaining_minutes}} min"
+    {%- else %}
+      [{"t":"{{hours}}","c":"#ffffff"},{"t":"h","c":"#9c9d97"},{"t":"{{remaining_minutes}}","c":"#ffffff"},{"t":"m","c":"#9c9d97"}]
+    {%- endif %}
     {%- endif %}
   sun_event_icon: >-
     {{ iif(sun_next_event == 'sunrise', icon_sunrise, icon_sunset) }}
@@ -1003,10 +995,10 @@ action:
             topic: "{{ repeat.item }}"
             payload: >
               {{payload}}
-#        - service: mqtt.publish
-#          data:
-#            qos: 0
-#            retain: false
-#            topic: "{{ repeat.item ~ '_sun'}} "
-#            payload: >
-#              {{sun_payload}}
+        - service: mqtt.publish
+          data:
+            qos: 0
+            retain: false
+            topic: "{{ repeat.item ~ '_sun' }}"
+            payload: >
+              {{sun_payload}}
