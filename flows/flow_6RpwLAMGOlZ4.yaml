@@ -581,10 +581,11 @@ blueprint:
         text:
       default: "w-sunset"
 
-mode: restart
+mode: single
 variables:
   device_ids: !input awtrix
   app_topic: jeef_weather
+  forecast_var: !input forecast_var
   devices_topics: >-
     {%- macro get_device_topic(device_id) %}
     {{ states((device_entities(device_id) | select('search','device_topic') | list)[0]) }}
@@ -598,19 +599,19 @@ variables:
     {{ ns.devices | reject('match','unavailable') | list}}
 
   forecast_var: !input forecast_var
-  forecast: "{{state_attr(forecast_var,'forecast')}}"
-  weather: "{{states(forecast_var)}}"
+  forecast: "{{ state_attr(forecast_var,'forecast') or [] }}"
+  weather: "{{ states(forecast_var) if states(forecast_var) not in ['unknown','unavailable'] else 'sunny' }}"
   hours_to_show: !input hours_to_show
   #---------------------------------
   # Moon Stuff
   #---------------------------------
   moon: !input moon
-  moon_phase: "{{states(moon)}}"
+  moon_phase: "{{ states(moon) | default('new_moon') }}"
   moon_times: !input moon_rise_set
-  moon_rise: "{{state_attr(moon_times,'moonrise')}}"
-  moon_set: "{{state_attr(moon_times,'moonset')}}"
-  moon_alt: "{{state_attr(moon_times,'moon_altitude')}}"
-  moon_risen: "{{moon_alt > 0}}"
+  moon_rise: "{{ state_attr(moon_times,'moonrise') or '00:00' if moon_times is defined and moon_times else '00:00' }}"
+  moon_set: "{{ state_attr(moon_times,'moonset') or '00:00' if moon_times is defined and moon_times else '00:00' }}"
+  moon_alt: "{{ state_attr(moon_times,'moon_altitude') or 0 if moon_times is defined and moon_times else 0 }}"
+  moon_risen: "{{ moon_alt is not none and moon_alt > 0 }}"
   when_show_moon: !input when_show_moon
   show_moon: >-
     {%- if when_show_moon == 'always' %}
@@ -620,7 +621,7 @@ variables:
     {%- elif when_show_moon == 'risen' %}
     {{moon_risen}}
     {%- else %}
-    {{state_attr('sun.sun', 'elevation') > 0 and moon_risen}}
+    {{ (state_attr('sun.sun', 'elevation') | default(0)) > 0 and moon_risen }}
     {%- endif %}
   #----------------
   # Temp & Text
@@ -630,7 +631,7 @@ variables:
   current_temp_var: !input current_temp_var
   temp_digits: !input temp_digits
   temp_suffix: !input temp_suffix
-  current_temp: "{{states(current_temp_var) | round(temp_digits)}}"
+  current_temp: "{{ states(current_temp_var) | default(0) | float | round(temp_digits) }}"
   temp_text: "{{ current_temp ~ temp_suffix}}"
   forecast_temp_field: !input forecast_temp_field
   text_available_width: >
@@ -670,32 +671,35 @@ variables:
   show_sun_rise_set: !input show_sun_rise_set
 
   sun_next_event: >-
-    {%- set rise = state_attr('sun.sun','next_rising') %}
-    {%- set set = state_attr('sun.sun','next_setting') %}
+    {%- set rise = state_attr('sun.sun','next_rising') or '2023-01-01T06:00:00+00:00' %}
+    {%- set set = state_attr('sun.sun','next_setting') or '2023-01-01T18:00:00+00:00' %}
     {%- set ts_rise = rise |as_timestamp %}
     {%- set ts_set = set |as_timestamp %}
     {{ iif(ts_set < ts_rise,'sunset','sunrise') }}
   sun_min_until_next_event: >-
-    {%- set rise = state_attr('sun.sun','next_rising') %}
-    {%- set set = state_attr('sun.sun','next_setting') %}
+    {%- set rise = state_attr('sun.sun','next_rising') or '2023-01-01T06:00:00+00:00' %}
+    {%- set set = state_attr('sun.sun','next_setting') or '2023-01-01T18:00:00+00:00' %}
     {%- set ts_rise = rise |as_timestamp %}
     {%- set ts_set = set |as_timestamp %}
+    {%- set next_event = iif(ts_set < ts_rise,'sunset','sunrise') %}
     {{ iif(next_event == 'sunrise',(ts_rise - utcnow()|as_timestamp) / 60,(ts_set - utcnow()|as_timestamp) / 60) | round(0) }}
 
   sun_next_str: >-
-    {%- set rise = state_attr('sun.sun','next_rising') %}
-    {%- set set = state_attr('sun.sun','next_setting') %}
+    {%- set rise = state_attr('sun.sun','next_rising') or '2023-01-01T06:00:00+00:00' %}
+    {%- set set = state_attr('sun.sun','next_setting') or '2023-01-01T18:00:00+00:00' %}
     {%- set ts_rise = rise |as_timestamp %}
     {%- set ts_set = set |as_timestamp %}
+    {%- set next_event = sun_next_event %}
     {%- if sun_time_type == 'Actual' %}
-      {{ iif(sun_next_event == 'sunrise',(ts_rise | as_datetime | as_local).strftime(sun_time_format),  (ts_set | as_datetime | as_local).strftime(sun_time_format)) }}
+      {{ iif(next_event == 'sunrise',(ts_rise | as_datetime | as_local).strftime(sun_time_format),  (ts_set | as_datetime | as_local).strftime(sun_time_format)) | to_json }}
     {%- else %}
     {#- relative time #}
-      {% set hours = sun_min_until_next_event // 60 %}
-      {% set remaining_minutes = sun_min_until_next_event % 60 %}
+      {% set minutes = sun_min_until_next_event %}
+      {% set hours = minutes // 60 %}
+      {% set remaining_minutes = minutes % 60 %}
 
       {% if hours == 0 %}
-          {{ remaining_minutes }} min
+          {{ (remaining_minutes ~ ' min') | to_json }}
       {% else %}
           [
             {"t":"{{hours}}", "c":"#ffffff"},
@@ -954,9 +958,9 @@ variables:
     {%- macro draw_forecast_lines(x,hours,height) %}
       {%- for hour in range(hours) %}
         {%- if height == 0 %}
-          {"dp": [{{x+hour}},7,"{{interpolate(color_dict, forecast[hour][forecast_temp_field]) }}"]}
+          {"dp": [{{x+hour}},7,"{{interpolate(color_dict, (forecast[hour][forecast_temp_field] if forecast and forecast[hour] is not none and forecast_temp_field in forecast[hour] else 0) | float) }}"]}
         {%- else %}
-          {"dl": [{{x+hour}},7,{{x+hour}},{{7 - height}},"{{interpolate(color_dict, forecast[hour][forecast_temp_field]) }}"]}
+          {"dl": [{{x+hour}},7,{{x+hour}},{{7 - height}},"{{interpolate(color_dict, (forecast[hour][forecast_temp_field] if forecast and forecast[hour] is not none and forecast_temp_field in forecast[hour] else 0) | float) }}"]}
         {%- endif %}
         {%- if hour+1 != hours %},{%endif%}
       {%- endfor %}
@@ -964,7 +968,7 @@ variables:
     {# Define the color mapping dictionary #}
     {
     "draw": [
-      {{draw_forecast_lines(8,hours_to_show,0)}},
+      {{draw_forecast_lines(8, [hours_to_show, (forecast or [])|length]|min, 0)}},
       {"dt":[{{text_x}},1,"{{temp_text}}","{{interpolate(color_dict, current_temp | float)}}"]}
       {% if show_moon %}, {{moon_data}} {% endif %}
     ],
@@ -983,7 +987,9 @@ trigger:
     id: Changes
     enabled: true
 
-condition: []
+condition:
+  - condition: template
+    value_template: "{{ forecast_var is defined and forecast_var and states(forecast_var) not in ['unavailable','unknown'] }}"
 
 action:
   - repeat:
