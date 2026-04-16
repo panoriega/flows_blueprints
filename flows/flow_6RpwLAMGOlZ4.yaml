@@ -1002,10 +1002,10 @@ action:
             topic: "{{ repeat.item }}"
             payload: >
               {{payload}}
-        - service: mqtt.publish
-          data:
-            qos: 0
-            retain: false
-            topic: "{{ repeat.item ~ '_sun'}} "
-            payload: >
-              {{sun_payload}}
+#        - service: mqtt.publish
+#          data:
+#            qos: 0
+#            retain: false
+#            topic: "{{ repeat.item ~ '_sun'}} "
+#            payload: >
+#              {{sun_payload}}
